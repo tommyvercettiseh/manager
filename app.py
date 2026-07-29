@@ -27,7 +27,6 @@ class RepoState:
     name: str
     full_name: str
     clone_url: str
-    html_url: str
     default_branch: str
     local_path: Path
     local_exists: bool
@@ -135,6 +134,8 @@ class RepoManagerApp(tk.Tk):
         style.map("Primary.TButton", background=[("active", "#4b89f7")])
         style.configure("Secondary.TButton", background="#1d2632", foreground="#dbe4ee")
         style.map("Secondary.TButton", background=[("active", "#283544")])
+        style.configure("Danger.TButton", background="#d74b4b", foreground="white")
+        style.map("Danger.TButton", background=[("active", "#e05c5c")])
         style.configure("TCheckbutton", background="#111821", foreground="#dbe4ee")
         style.configure("TEntry", fieldbackground="#18212c", foreground="white")
 
@@ -256,7 +257,6 @@ class RepoManagerApp(tk.Tk):
             name=repo["name"],
             full_name=full_name,
             clone_url=repo["clone_url"],
-            html_url=repo["html_url"],
             default_branch=default_branch,
             local_path=local_path,
             favorite=favorite,
@@ -317,8 +317,8 @@ class RepoManagerApp(tk.Tk):
                         self.store.save()
                         for repo in self.repos:
                             repo.favorite = repo.full_name in first
-                    outdated = sum(repo.state == "OUTDATED" for repo in self.repos)
-                    self.status_var.set(f"{len(self.repos)} repositories gecontroleerd • {outdated} outdated")
+                    not_live = sum(repo.state != "LIVE" for repo in self.repos)
+                    self.status_var.set(f"{len(self.repos)} repositories gecontroleerd • {not_live} niet LIVE")
                     self.render_cards()
                 elif event == "done":
                     self.status_var.set(payload)
@@ -375,8 +375,8 @@ class RepoManagerApp(tk.Tk):
 
         if not repo.local_exists:
             ttk.Button(actions, text="Klonen", style="Primary.TButton", command=lambda: self.clone_repo(repo)).pack(side="left")
-        elif repo.state == "OUTDATED":
-            ttk.Button(actions, text="Updaten", style="Primary.TButton", command=lambda: self.update_repo(repo)).pack(side="left")
+        elif repo.state != "LIVE":
+            ttk.Button(actions, text="Maak LIVE", style="Danger.TButton", command=lambda: self.make_live(repo)).pack(side="left")
         else:
             ttk.Button(actions, text="Openen", style="Secondary.TButton", command=lambda: self.open_repo(repo)).pack(side="left")
 
@@ -403,11 +403,40 @@ class RepoManagerApp(tk.Tk):
 
     def clone_repo(self, repo: RepoState) -> None:
         Path(self.root_var.get()).mkdir(parents=True, exist_ok=True)
-        self._run_action(["git", "clone", repo.clone_url, str(repo.local_path)], f"{repo.name} gekloond")
+        self._run_action(
+            ["git", "clone", "--branch", repo.default_branch, repo.clone_url, str(repo.local_path)],
+            f"{repo.name} gekloond en LIVE",
+        )
 
-    def update_repo(self, repo: RepoState) -> None:
-        command = ["git", "-C", str(repo.local_path), "pull", "--ff-only", "origin", repo.default_branch]
-        self._run_action(command, f"{repo.name} bijgewerkt")
+    def make_live(self, repo: RepoState) -> None:
+        confirmed = messagebox.askyesno(
+            "Lokale map overschrijven",
+            (
+                f"GitHub wordt de enige waarheid voor {repo.name}.\n\n"
+                "Alle lokale wijzigingen, lokale commits en niet-opgeslagen Git-bestanden "
+                "worden verwijderd. Doorgaan?"
+            ),
+            parent=self,
+        )
+        if not confirmed:
+            return
+
+        self.status_var.set(f"{repo.name} exact gelijkmaken aan GitHub...")
+
+        def worker() -> None:
+            try:
+                self._git(repo.local_path, "fetch", "--prune", "origin", repo.default_branch, timeout=60)
+                self._git(repo.local_path, "checkout", "-B", repo.default_branch, f"origin/{repo.default_branch}")
+                self._git(repo.local_path, "reset", "--hard", f"origin/{repo.default_branch}")
+                self._git(repo.local_path, "clean", "-fd")
+                self.events.put(("done", f"{repo.name} is nu exact LIVE"))
+            except subprocess.CalledProcessError as exc:
+                message = exc.stderr.strip() or exc.stdout.strip() or str(exc)
+                self.events.put(("error", message))
+            except (OSError, subprocess.SubprocessError) as exc:
+                self.events.put(("error", str(exc)))
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _run_action(self, command: list[str], success: str) -> None:
         self.status_var.set("Git-actie uitvoeren...")
