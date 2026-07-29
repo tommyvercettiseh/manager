@@ -5,13 +5,13 @@ import os
 import queue
 import subprocess
 import threading
-import tkinter as tk
 import webbrowser
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import messagebox
 from typing import Any
 
+import customtkinter as ctk
 import keyring
 import requests
 
@@ -21,12 +21,36 @@ CONFIG_DIR = Path(os.getenv("APPDATA", Path.home())) / "RepoManager"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 GITHUB_API = "https://api.github.com"
 
+COLORS = {
+    "bg": "#F5F7FF",
+    "surface": "#FFFFFF",
+    "surface_alt": "#F8FAFF",
+    "text": "#101938",
+    "muted": "#7180A2",
+    "border": "#E2E7F2",
+    "blue": "#4A67FF",
+    "purple": "#8D49F7",
+    "blue_hover": "#3B57EC",
+    "soft_blue": "#EEF2FF",
+    "live": "#27B768",
+    "live_bg": "#E9F9EF",
+    "outdated": "#F59A23",
+    "outdated_bg": "#FFF3E2",
+    "local": "#74819A",
+    "local_bg": "#EEF1F6",
+    "danger": "#E95E68",
+    "danger_bg": "#FDECEF",
+    "check": "#B47A17",
+    "check_bg": "#FFF5DA",
+}
+
 
 @dataclass
 class RepoState:
     name: str
     full_name: str
     clone_url: str
+    html_url: str
     default_branch: str
     local_path: Path
     local_exists: bool
@@ -99,102 +123,245 @@ class GitHubClient:
         return repos
 
 
-class RepoManagerApp(tk.Tk):
+class RepoManagerApp(ctk.CTk):
     def __init__(self) -> None:
         super().__init__()
+        ctk.set_appearance_mode("light")
+        ctk.set_default_color_theme("blue")
+
         self.title(APP_NAME)
-        self.geometry("1120x720")
-        self.minsize(900, 560)
-        self.configure(bg="#0d1117")
+        self.geometry("1180x780")
+        self.minsize(920, 620)
+        self.configure(fg_color=COLORS["bg"])
 
         self.store = ConfigStore()
         self.client: GitHubClient | None = None
         self.repos: list[RepoState] = []
         self.events: queue.Queue[tuple[str, Any]] = queue.Queue()
 
-        self.root_var = tk.StringVar(value=self.store.data["root_folder"])
-        self.status_var = tk.StringVar(value="GitHub nog niet geladen")
-        self.search_var = tk.StringVar()
-        self.only_favorites = tk.BooleanVar(value=True)
+        self.root_var = ctk.StringVar(value=self.store.data["root_folder"])
+        self.status_var = ctk.StringVar(value="GitHub nog niet geladen")
+        self.search_var = ctk.StringVar()
+        self.only_favorites = ctk.BooleanVar(value=True)
 
-        self._configure_style()
         self._build_ui()
         self.after(150, self._poll_events)
 
         if keyring.get_password(APP_NAME, "github_token"):
-            self.after(250, self.refresh)
+            self.after(300, self.refresh)
         else:
-            self.after(250, self.show_login)
-
-    def _configure_style(self) -> None:
-        style = ttk.Style(self)
-        style.theme_use("clam")
-        style.configure("TButton", padding=(12, 8), borderwidth=0)
-        style.configure("Primary.TButton", background="#3478f6", foreground="white")
-        style.map("Primary.TButton", background=[("active", "#4b89f7")])
-        style.configure("Secondary.TButton", background="#1d2632", foreground="#dbe4ee")
-        style.map("Secondary.TButton", background=[("active", "#283544")])
-        style.configure("Danger.TButton", background="#d74b4b", foreground="white")
-        style.map("Danger.TButton", background=[("active", "#e05c5c")])
-        style.configure("TCheckbutton", background="#111821", foreground="#dbe4ee")
-        style.configure("TEntry", fieldbackground="#18212c", foreground="white")
+            self.after(300, self.show_login)
 
     def _build_ui(self) -> None:
-        shell = tk.Frame(self, bg="#111821", highlightthickness=1, highlightbackground="#263241")
-        shell.pack(fill="both", expand=True, padx=22, pady=22)
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(2, weight=1)
 
-        header = tk.Frame(shell, bg="#111821")
-        header.pack(fill="x", padx=24, pady=(22, 10))
+        header = ctk.CTkFrame(self, fg_color="transparent")
+        header.grid(row=0, column=0, sticky="ew", padx=34, pady=(28, 12))
+        header.grid_columnconfigure(1, weight=1)
 
-        title_box = tk.Frame(header, bg="#111821")
-        title_box.pack(side="left")
-        tk.Label(title_box, text=APP_NAME, bg="#111821", fg="#f5f7fa", font=("Segoe UI", 23, "bold")).pack(anchor="w")
-        tk.Label(title_box, textvariable=self.root_var, bg="#111821", fg="#8290a2", font=("Segoe UI", 9)).pack(anchor="w", pady=(3, 0))
+        logo = ctk.CTkFrame(header, width=68, height=68, corner_radius=20, fg_color="#EDEBFF")
+        logo.grid(row=0, column=0, rowspan=2, sticky="w")
+        logo.grid_propagate(False)
+        ctk.CTkLabel(
+            logo,
+            text="◈",
+            font=ctk.CTkFont(size=30, weight="bold"),
+            text_color=COLORS["purple"],
+        ).place(relx=0.5, rely=0.5, anchor="center")
 
-        self.login_button = ttk.Button(header, text="GitHub login", style="Secondary.TButton", command=self.show_login)
-        self.login_button.pack(side="right")
+        ctk.CTkLabel(
+            header,
+            text=APP_NAME,
+            font=ctk.CTkFont(size=32, weight="bold"),
+            text_color=COLORS["text"],
+        ).grid(row=0, column=1, sticky="sw", padx=(18, 0))
 
-        controls = tk.Frame(shell, bg="#111821")
-        controls.pack(fill="x", padx=24, pady=(6, 14))
-        ttk.Checkbutton(controls, text="Favorieten", variable=self.only_favorites, command=self.render_cards).pack(side="left")
-        ttk.Button(controls, text="↻ GitHub vernieuwen", style="Primary.TButton", command=self.refresh).pack(side="left", padx=(10, 0))
-        ttk.Button(controls, text="Map openen", style="Secondary.TButton", command=self.open_root).pack(side="left", padx=(10, 0))
-        search = ttk.Entry(controls, textvariable=self.search_var, width=30)
-        search.pack(side="right")
+        ctk.CTkLabel(
+            header,
+            textvariable=self.root_var,
+            font=ctk.CTkFont(size=12),
+            text_color=COLORS["muted"],
+        ).grid(row=1, column=1, sticky="nw", padx=(18, 0), pady=(2, 0))
+
+        self.login_button = ctk.CTkButton(
+            header,
+            text="GitHub login",
+            width=180,
+            height=44,
+            corner_radius=22,
+            fg_color=COLORS["surface"],
+            hover_color=COLORS["soft_blue"],
+            border_width=1,
+            border_color=COLORS["border"],
+            text_color=COLORS["text"],
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self.show_login,
+        )
+        self.login_button.grid(row=0, column=2, rowspan=2, sticky="e")
+
+        toolbar = ctk.CTkFrame(self, fg_color="transparent")
+        toolbar.grid(row=1, column=0, sticky="ew", padx=34, pady=(8, 16))
+        toolbar.grid_columnconfigure(3, weight=1)
+
+        self.favorite_button = ctk.CTkButton(
+            toolbar,
+            text="★  Favorieten",
+            width=140,
+            height=44,
+            corner_radius=14,
+            fg_color=COLORS["surface"],
+            hover_color=COLORS["soft_blue"],
+            border_width=1,
+            border_color=COLORS["border"],
+            text_color=COLORS["text"],
+            command=self.toggle_favorites_filter,
+        )
+        self.favorite_button.grid(row=0, column=0, padx=(0, 10))
+
+        self.refresh_button = ctk.CTkButton(
+            toolbar,
+            text="↻  GitHub vernieuwen",
+            width=178,
+            height=44,
+            corner_radius=14,
+            fg_color=COLORS["blue"],
+            hover_color=COLORS["blue_hover"],
+            text_color="white",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            command=self.refresh,
+        )
+        self.refresh_button.grid(row=0, column=1, padx=(0, 10))
+
+        ctk.CTkButton(
+            toolbar,
+            text="▣  Map openen",
+            width=140,
+            height=44,
+            corner_radius=14,
+            fg_color=COLORS["surface"],
+            hover_color=COLORS["soft_blue"],
+            border_width=1,
+            border_color=COLORS["border"],
+            text_color=COLORS["text"],
+            command=self.open_root,
+        ).grid(row=0, column=2)
+
+        search = ctk.CTkEntry(
+            toolbar,
+            textvariable=self.search_var,
+            placeholder_text="Zoeken in repositories...",
+            width=280,
+            height=44,
+            corner_radius=14,
+            fg_color=COLORS["surface"],
+            border_color=COLORS["border"],
+            text_color=COLORS["text"],
+            placeholder_text_color="#9AA6BF",
+        )
+        search.grid(row=0, column=4, sticky="e")
         self.search_var.trace_add("write", lambda *_: self.render_cards())
 
-        self.canvas = tk.Canvas(shell, bg="#111821", highlightthickness=0)
-        scrollbar = ttk.Scrollbar(shell, orient="vertical", command=self.canvas.yview)
-        self.cards = tk.Frame(self.canvas, bg="#111821")
-        self.cards_window = self.canvas.create_window((0, 0), window=self.cards, anchor="nw")
-        self.cards.bind("<Configure>", lambda _: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>", lambda event: self.canvas.itemconfigure(self.cards_window, width=event.width))
-        self.canvas.configure(yscrollcommand=scrollbar.set)
-        self.canvas.pack(side="left", fill="both", expand=True, padx=(24, 0), pady=(0, 8))
-        scrollbar.pack(side="right", fill="y", padx=(0, 16), pady=(0, 8))
+        self.scroll = ctk.CTkScrollableFrame(
+            self,
+            fg_color="transparent",
+            scrollbar_button_color="#C9D1E5",
+            scrollbar_button_hover_color="#AAB6D2",
+        )
+        self.scroll.grid(row=2, column=0, sticky="nsew", padx=26, pady=(0, 8))
+        self.scroll.grid_columnconfigure((0, 1), weight=1, uniform="cards")
 
-        tk.Label(shell, textvariable=self.status_var, bg="#111821", fg="#8290a2", font=("Segoe UI", 9)).pack(anchor="w", padx=24, pady=(4, 16))
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.grid(row=3, column=0, sticky="ew", padx=34, pady=(2, 20))
+        ctk.CTkLabel(
+            footer,
+            textvariable=self.status_var,
+            font=ctk.CTkFont(size=12),
+            text_color=COLORS["muted"],
+        ).pack(side="left")
+
+        self._refresh_filter_button()
+
+    def toggle_favorites_filter(self) -> None:
+        self.only_favorites.set(not self.only_favorites.get())
+        self._refresh_filter_button()
+        self.render_cards()
+
+    def _refresh_filter_button(self) -> None:
+        active = self.only_favorites.get()
+        self.favorite_button.configure(
+            fg_color=COLORS["soft_blue"] if active else COLORS["surface"],
+            border_color="#BFC9FF" if active else COLORS["border"],
+            text_color=COLORS["blue"] if active else COLORS["text"],
+            text="★  Favorieten" if active else "☆  Alles tonen",
+        )
 
     def show_login(self) -> None:
-        dialog = tk.Toplevel(self)
+        dialog = ctk.CTkToplevel(self)
         dialog.title("GitHub verbinden")
-        dialog.geometry("500x250")
+        dialog.geometry("520x300")
         dialog.resizable(False, False)
-        dialog.configure(bg="#111821")
+        dialog.configure(fg_color=COLORS["bg"])
         dialog.transient(self)
         dialog.grab_set()
 
-        tk.Label(dialog, text="GitHub verbinden", bg="#111821", fg="white", font=("Segoe UI", 19, "bold")).pack(anchor="w", padx=22, pady=(20, 4))
-        tk.Label(dialog, text="Plak een fine-grained GitHub-token.", bg="#111821", fg="#8290a2").pack(anchor="w", padx=22)
+        card = ctk.CTkFrame(
+            dialog,
+            corner_radius=24,
+            fg_color=COLORS["surface"],
+            border_width=1,
+            border_color=COLORS["border"],
+        )
+        card.pack(fill="both", expand=True, padx=18, pady=18)
 
-        token_var = tk.StringVar(value=keyring.get_password(APP_NAME, "github_token") or "")
-        token_entry = ttk.Entry(dialog, textvariable=token_var, show="•")
-        token_entry.pack(fill="x", padx=22, pady=(16, 10))
-        ttk.Entry(dialog, textvariable=self.root_var).pack(fill="x", padx=22)
+        ctk.CTkLabel(
+            card,
+            text="GitHub verbinden",
+            font=ctk.CTkFont(size=24, weight="bold"),
+            text_color=COLORS["text"],
+        ).pack(anchor="w", padx=24, pady=(24, 4))
+        ctk.CTkLabel(
+            card,
+            text="Gebruik een fine-grained token met toegang tot je repositories.",
+            font=ctk.CTkFont(size=12),
+            text_color=COLORS["muted"],
+        ).pack(anchor="w", padx=24)
 
-        row = tk.Frame(dialog, bg="#111821")
-        row.pack(fill="x", padx=22, pady=18)
-        ttk.Button(row, text="Token maken", style="Secondary.TButton", command=lambda: webbrowser.open("https://github.com/settings/personal-access-tokens/new")).pack(side="left")
+        token_var = ctk.StringVar(value=keyring.get_password(APP_NAME, "github_token") or "")
+        token_entry = ctk.CTkEntry(
+            card,
+            textvariable=token_var,
+            show="•",
+            height=42,
+            corner_radius=12,
+            fg_color=COLORS["surface_alt"],
+            border_color=COLORS["border"],
+        )
+        token_entry.pack(fill="x", padx=24, pady=(18, 10))
+        ctk.CTkEntry(
+            card,
+            textvariable=self.root_var,
+            height=42,
+            corner_radius=12,
+            fg_color=COLORS["surface_alt"],
+            border_color=COLORS["border"],
+        ).pack(fill="x", padx=24)
+
+        row = ctk.CTkFrame(card, fg_color="transparent")
+        row.pack(fill="x", padx=24, pady=20)
+        ctk.CTkButton(
+            row,
+            text="Token maken",
+            width=120,
+            height=40,
+            corner_radius=12,
+            fg_color=COLORS["surface_alt"],
+            hover_color=COLORS["soft_blue"],
+            border_width=1,
+            border_color=COLORS["border"],
+            text_color=COLORS["text"],
+            command=lambda: webbrowser.open("https://github.com/settings/personal-access-tokens/new"),
+        ).pack(side="left")
 
         def connect() -> None:
             token = token_var.get().strip()
@@ -208,7 +375,16 @@ class RepoManagerApp(tk.Tk):
             dialog.destroy()
             self.refresh()
 
-        ttk.Button(row, text="Verbinden", style="Primary.TButton", command=connect).pack(side="right")
+        ctk.CTkButton(
+            row,
+            text="Verbinden",
+            width=120,
+            height=40,
+            corner_radius=12,
+            fg_color=COLORS["blue"],
+            hover_color=COLORS["blue_hover"],
+            command=connect,
+        ).pack(side="right")
         token_entry.focus_set()
 
     def refresh(self) -> None:
@@ -217,6 +393,7 @@ class RepoManagerApp(tk.Tk):
             self.show_login()
             return
         self.status_var.set("GitHub en lokale mappen controleren...")
+        self.refresh_button.configure(state="disabled", text="Controleren...")
         self.client = GitHubClient(token)
         threading.Thread(target=self._load_worker, daemon=True).start()
 
@@ -257,6 +434,7 @@ class RepoManagerApp(tk.Tk):
             name=repo["name"],
             full_name=full_name,
             clone_url=repo["clone_url"],
+            html_url=repo["html_url"],
             default_branch=default_branch,
             local_path=local_path,
             favorite=favorite,
@@ -310,84 +488,205 @@ class RepoManagerApp(tk.Tk):
                 event, payload = self.events.get_nowait()
                 if event == "loaded":
                     username, self.repos = payload
-                    self.login_button.configure(text=f"● {username}")
+                    self.login_button.configure(text=f"●  {username}")
                     if not self.store.data.get("favorites") and self.repos:
                         first = [repo.full_name for repo in self.repos[:3]]
                         self.store.data["favorites"] = first
                         self.store.save()
                         for repo in self.repos:
                             repo.favorite = repo.full_name in first
-                    not_live = sum(repo.state != "LIVE" for repo in self.repos)
-                    self.status_var.set(f"{len(self.repos)} repositories gecontroleerd • {not_live} niet LIVE")
+                    outdated = sum(repo.state == "OUTDATED" for repo in self.repos)
+                    self.status_var.set(f"{len(self.repos)} repositories gecontroleerd  •  {outdated} outdated")
+                    self.refresh_button.configure(state="normal", text="↻  GitHub vernieuwen")
                     self.render_cards()
                 elif event == "done":
                     self.status_var.set(payload)
+                    self.refresh_button.configure(state="normal", text="↻  GitHub vernieuwen")
                     self.refresh()
                 elif event == "error":
                     self.status_var.set("Actie mislukt")
+                    self.refresh_button.configure(state="normal", text="↻  GitHub vernieuwen")
                     messagebox.showerror(APP_NAME, payload, parent=self)
         except queue.Empty:
             pass
         self.after(150, self._poll_events)
 
     def render_cards(self) -> None:
-        for child in self.cards.winfo_children():
+        for child in self.scroll.winfo_children():
             child.destroy()
 
         query = self.search_var.get().strip().lower()
         visible = [
-            repo for repo in self.repos
+            repo
+            for repo in self.repos
             if (not self.only_favorites.get() or repo.favorite)
             and (not query or query in repo.name.lower())
         ]
-        width = max(self.canvas.winfo_width(), 1)
-        columns = 3 if width >= 980 else 2 if width >= 640 else 1
 
         if not visible:
-            tk.Label(self.cards, text="Geen repositories zichtbaar.", bg="#111821", fg="#8290a2").grid(row=0, column=0, pady=30)
+            ctk.CTkLabel(
+                self.scroll,
+                text="Geen repositories zichtbaar.",
+                font=ctk.CTkFont(size=14),
+                text_color=COLORS["muted"],
+            ).grid(row=0, column=0, padx=20, pady=40, sticky="w")
             return
 
         for index, repo in enumerate(visible):
-            row, column = divmod(index, columns)
-            self._card(repo).grid(row=row, column=column, padx=8, pady=8, sticky="nsew")
-        for column in range(columns):
-            self.cards.grid_columnconfigure(column, weight=1, uniform="cards")
+            row, column = divmod(index, 2)
+            self._card(repo).grid(row=row, column=column, padx=10, pady=10, sticky="nsew")
 
-    def _card(self, repo: RepoState) -> tk.Frame:
-        card = tk.Frame(self.cards, bg="#18212c", highlightthickness=1, highlightbackground="#2b3948", padx=16, pady=15)
-        top = tk.Frame(card, bg="#18212c")
-        top.pack(fill="x")
-        tk.Label(top, text=repo.name, bg="#18212c", fg="#f5f7fa", font=("Segoe UI", 12, "bold")).pack(side="left")
-        ttk.Button(top, text="×" if repo.favorite else "+", style="Primary.TButton" if repo.favorite else "Secondary.TButton", width=3, command=lambda: self.toggle_favorite(repo)).pack(side="right")
+    def _status_style(self, state: str) -> tuple[str, str]:
+        return {
+            "LIVE": (COLORS["live"], COLORS["live_bg"]),
+            "OUTDATED": (COLORS["outdated"], COLORS["outdated_bg"]),
+            "LOCAL": (COLORS["local"], COLORS["local_bg"]),
+            "NIET LOKAAL": (COLORS["danger"], COLORS["danger_bg"]),
+            "CHECK": (COLORS["check"], COLORS["check_bg"]),
+        }.get(state, (COLORS["local"], COLORS["local_bg"]))
 
-        colors = {
-            "LIVE": "#3bd58b",
-            "OUTDATED": "#ffad42",
-            "LOCAL": "#9aa7b6",
-            "NIET LOKAAL": "#ef6b73",
-            "CHECK": "#d9a441",
-        }
-        tk.Label(card, text=f"●  {repo.state}", bg="#18212c", fg=colors.get(repo.state, "#9aa7b6"), font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(14, 5))
-        tk.Label(card, text=repo.detail, bg="#18212c", fg="#c1cad5", font=("Segoe UI", 9)).pack(anchor="w")
+    def _card(self, repo: RepoState) -> ctk.CTkFrame:
+        tint = {
+            "LIVE": "#F7FFF9",
+            "OUTDATED": "#FFFBF3",
+            "LOCAL": "#FBFCFF",
+            "NIET LOKAAL": "#FFF8FA",
+            "CHECK": "#FFFCF3",
+        }.get(repo.state, COLORS["surface"])
 
-        actions = tk.Frame(card, bg="#18212c")
-        actions.pack(fill="x", pady=(16, 0))
+        card = ctk.CTkFrame(
+            self.scroll,
+            corner_radius=22,
+            fg_color=tint,
+            border_width=1,
+            border_color=COLORS["border"],
+        )
+        card.grid_columnconfigure(0, weight=1)
+
+        top = ctk.CTkFrame(card, fg_color="transparent")
+        top.grid(row=0, column=0, sticky="ew", padx=22, pady=(20, 0))
+        top.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            top,
+            text=repo.name,
+            font=ctk.CTkFont(size=19, weight="bold"),
+            text_color=COLORS["text"],
+        ).grid(row=0, column=0, sticky="w")
+
+        ctk.CTkButton(
+            top,
+            text="×" if repo.favorite else "+",
+            width=42,
+            height=36,
+            corner_radius=12,
+            fg_color=COLORS["soft_blue"] if repo.favorite else COLORS["surface"],
+            hover_color="#E4E9FF",
+            border_width=1,
+            border_color="#C8D0FF" if repo.favorite else COLORS["border"],
+            text_color=COLORS["blue"],
+            font=ctk.CTkFont(size=18, weight="bold"),
+            command=lambda: self.toggle_favorite(repo),
+        ).grid(row=0, column=1)
+
+        status_color, status_bg = self._status_style(repo.state)
+        badge = ctk.CTkFrame(card, corner_radius=10, fg_color=status_bg)
+        badge.grid(row=1, column=0, sticky="w", padx=22, pady=(18, 0))
+        ctk.CTkLabel(
+            badge,
+            text=f"●  {repo.state}",
+            font=ctk.CTkFont(size=12, weight="bold"),
+            text_color=status_color,
+        ).pack(padx=12, pady=6)
+
+        ctk.CTkLabel(
+            card,
+            text=repo.detail,
+            font=ctk.CTkFont(size=13),
+            text_color="#45516E",
+            anchor="w",
+        ).grid(row=2, column=0, sticky="ew", padx=22, pady=(12, 0))
+
+        actions = ctk.CTkFrame(card, fg_color="transparent")
+        actions.grid(row=3, column=0, sticky="ew", padx=22, pady=(22, 20))
+        actions.grid_columnconfigure(2, weight=1)
 
         if not repo.local_exists:
-            ttk.Button(actions, text="Klonen", style="Primary.TButton", command=lambda: self.clone_repo(repo)).pack(side="left")
+            ctk.CTkButton(
+                actions,
+                text="Klonen",
+                width=110,
+                height=42,
+                corner_radius=12,
+                fg_color=COLORS["blue"],
+                hover_color=COLORS["blue_hover"],
+                font=ctk.CTkFont(size=12, weight="bold"),
+                command=lambda: self.clone_repo(repo),
+            ).grid(row=0, column=0, padx=(0, 8))
         elif repo.state != "LIVE":
-            ttk.Button(actions, text="Maak LIVE", style="Danger.TButton", command=lambda: self.make_live(repo)).pack(side="left")
+            ctk.CTkButton(
+                actions,
+                text="Maak LIVE",
+                width=118,
+                height=42,
+                corner_radius=12,
+                fg_color=COLORS["blue"],
+                hover_color=COLORS["blue_hover"],
+                font=ctk.CTkFont(size=12, weight="bold"),
+                command=lambda: self.make_live(repo),
+            ).grid(row=0, column=0, padx=(0, 8))
         else:
-            ttk.Button(actions, text="Openen", style="Secondary.TButton", command=lambda: self.open_repo(repo)).pack(side="left")
+            ctk.CTkButton(
+                actions,
+                text="▣  Openen",
+                width=118,
+                height=42,
+                corner_radius=12,
+                fg_color=COLORS["surface"],
+                hover_color=COLORS["soft_blue"],
+                border_width=1,
+                border_color=COLORS["border"],
+                text_color=COLORS["text"],
+                command=lambda: self.open_repo(repo),
+            ).grid(row=0, column=0, padx=(0, 8))
 
         bat_names = [path.name for path in repo.bat_files]
-        selected = tk.StringVar(value=bat_names[0] if bat_names else "Geen .bat")
-        menu = ttk.OptionMenu(actions, selected, selected.get(), *bat_names)
-        menu.pack(side="right")
+        selected = ctk.StringVar(value=bat_names[0] if bat_names else "Geen .bat")
+
         if bat_names:
-            ttk.Button(actions, text="Start", style="Primary.TButton", command=lambda: self.run_bat(repo, selected.get())).pack(side="right", padx=(0, 7))
-        else:
-            menu.state(["disabled"])
+            ctk.CTkButton(
+                actions,
+                text="▷  Start",
+                width=104,
+                height=42,
+                corner_radius=12,
+                fg_color=COLORS["purple"],
+                hover_color="#7C3BE7",
+                font=ctk.CTkFont(size=12, weight="bold"),
+                command=lambda: self.run_bat(repo, selected.get()),
+            ).grid(row=0, column=1, padx=(0, 8))
+
+        menu = ctk.CTkOptionMenu(
+            actions,
+            variable=selected,
+            values=bat_names or ["Geen .bat"],
+            width=190,
+            height=42,
+            corner_radius=12,
+            fg_color=COLORS["surface"],
+            button_color="#EEF1FF",
+            button_hover_color="#E2E7FF",
+            dropdown_fg_color=COLORS["surface"],
+            dropdown_hover_color=COLORS["soft_blue"],
+            text_color=COLORS["text"],
+            dropdown_text_color=COLORS["text"],
+            font=ctk.CTkFont(size=12),
+            dropdown_font=ctk.CTkFont(size=12),
+        )
+        menu.grid(row=0, column=3, sticky="e")
+        if not bat_names:
+            menu.configure(state="disabled")
+
         return card
 
     def toggle_favorite(self, repo: RepoState) -> None:
@@ -404,39 +703,32 @@ class RepoManagerApp(tk.Tk):
     def clone_repo(self, repo: RepoState) -> None:
         Path(self.root_var.get()).mkdir(parents=True, exist_ok=True)
         self._run_action(
-            ["git", "clone", "--branch", repo.default_branch, repo.clone_url, str(repo.local_path)],
-            f"{repo.name} gekloond en LIVE",
+            ["git", "clone", repo.clone_url, str(repo.local_path)],
+            f"{repo.name} gekloond",
         )
 
     def make_live(self, repo: RepoState) -> None:
-        confirmed = messagebox.askyesno(
-            "Lokale map overschrijven",
-            (
-                f"GitHub wordt de enige waarheid voor {repo.name}.\n\n"
-                "Alle lokale wijzigingen, lokale commits en niet-opgeslagen Git-bestanden "
-                "worden verwijderd. Doorgaan?"
-            ),
+        answer = messagebox.askyesno(
+            APP_NAME,
+            f"Lokale wijzigingen in '{repo.name}' worden verwijderd en GitHub wordt leidend. Doorgaan?",
             parent=self,
         )
-        if not confirmed:
+        if not answer:
             return
 
-        self.status_var.set(f"{repo.name} exact gelijkmaken aan GitHub...")
-
-        def worker() -> None:
-            try:
-                self._git(repo.local_path, "fetch", "--prune", "origin", repo.default_branch, timeout=60)
-                self._git(repo.local_path, "checkout", "-B", repo.default_branch, f"origin/{repo.default_branch}")
-                self._git(repo.local_path, "reset", "--hard", f"origin/{repo.default_branch}")
-                self._git(repo.local_path, "clean", "-fd")
-                self.events.put(("done", f"{repo.name} is nu exact LIVE"))
-            except subprocess.CalledProcessError as exc:
-                message = exc.stderr.strip() or exc.stdout.strip() or str(exc)
-                self.events.put(("error", message))
-            except (OSError, subprocess.SubprocessError) as exc:
-                self.events.put(("error", str(exc)))
-
-        threading.Thread(target=worker, daemon=True).start()
+        command = [
+            "cmd",
+            "/c",
+            "&&".join(
+                [
+                    f'git -C "{repo.local_path}" fetch --prune origin {repo.default_branch}',
+                    f'git -C "{repo.local_path}" checkout -B {repo.default_branch} origin/{repo.default_branch}',
+                    f'git -C "{repo.local_path}" reset --hard origin/{repo.default_branch}',
+                    f'git -C "{repo.local_path}" clean -fd',
+                ]
+            ),
+        ]
+        self._run_action(command, f"{repo.name} is LIVE")
 
     def _run_action(self, command: list[str], success: str) -> None:
         self.status_var.set("Git-actie uitvoeren...")
@@ -444,7 +736,14 @@ class RepoManagerApp(tk.Tk):
         def worker() -> None:
             try:
                 flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-                result = subprocess.run(command, check=True, capture_output=True, text=True, timeout=120, creationflags=flags)
+                result = subprocess.run(
+                    command,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=180,
+                    creationflags=flags,
+                )
                 self.events.put(("done", result.stdout.strip() or success))
             except subprocess.CalledProcessError as exc:
                 self.events.put(("error", exc.stderr.strip() or str(exc)))
@@ -465,7 +764,11 @@ class RepoManagerApp(tk.Tk):
         if not bat.exists():
             messagebox.showerror(APP_NAME, "Dit .bat-bestand bestaat niet meer.")
             return
-        subprocess.Popen(["cmd", "/c", "start", "", str(bat)], cwd=repo.local_path, shell=False)
+        subprocess.Popen(
+            ["cmd", "/c", "start", "", str(bat)],
+            cwd=repo.local_path,
+            shell=False,
+        )
 
 
 if __name__ == "__main__":
