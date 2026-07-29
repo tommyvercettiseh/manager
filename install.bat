@@ -5,20 +5,18 @@ cd /d "%~dp0"
 echo Repo Manager installeren...
 echo.
 
-where py >nul 2>nul
-if %errorlevel%==0 (
-    set "PYTHON_CMD=py"
-) else (
-    where python >nul 2>nul
-    if %errorlevel%==0 (
-        set "PYTHON_CMD=python"
-    ) else (
-        echo FOUT: Python is niet gevonden.
-        echo Installeer Python en vink "Add Python to PATH" aan.
-        pause
-        exit /b 1
-    )
+set "PYTHON_CMD="
+where py >nul 2>nul && set "PYTHON_CMD=py"
+if not defined PYTHON_CMD where python >nul 2>nul && set "PYTHON_CMD=python"
+
+if not defined PYTHON_CMD (
+    echo FOUT: Python is niet gevonden.
+    echo Installeer Python en vink "Add Python to PATH" aan.
+    pause
+    exit /b 1
 )
+
+echo Python gevonden via: %PYTHON_CMD%
 
 if exist ".venv" rmdir /s /q ".venv"
 
